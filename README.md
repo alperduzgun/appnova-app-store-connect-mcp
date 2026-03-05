@@ -29,7 +29,9 @@ Go to [App Store Connect → Users and Access → Integrations](https://appstore
 - **Private key** — download the `.p8` file (only downloadable once)
 - **Vendor Number** — from [Payments and Financial Reports](https://appstoreconnect.apple.com/finance/reports/overview)
 
-### 2. Add to Claude Desktop
+### 2. Add to your Claude client
+
+#### Claude Desktop
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -41,7 +43,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "headers": {
         "x-appstore-issuer-id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         "x-appstore-key-id": "XXXXXXXXXX",
-        "x-appstore-private-key": "-----BEGIN PRIVATE KEY-----\nMIGH...\n-----END PRIVATE KEY-----",
+        "x-appstore-private-key": "-----BEGIN PRIVATE KEY-----\\nMIGH...\\n-----END PRIVATE KEY-----",
         "x-appstore-vendor-number": "12345678"
       }
     }
@@ -49,17 +51,36 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-> **Private key format:** Open your `.p8` file in a text editor and paste the full content. Replace actual newlines with `\n` — the entire key goes on one JSON line.
+#### Claude Code
 
-### 3. Restart Claude Desktop
+Add to `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "appstore": {
+      "type": "http",
+      "url": "https://haikuku-appnova-app-store-connect-mcp.hf.space/mcp",
+      "headers": {
+        "x-appstore-issuer-id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "x-appstore-key-id": "XXXXXXXXXX",
+        "x-appstore-private-key": "-----BEGIN PRIVATE KEY-----\\nMIGH...\\n-----END PRIVATE KEY-----",
+        "x-appstore-vendor-number": "12345678"
+      }
+    }
+  }
+}
+```
+
+### 3. Restart your Claude client
 
 That's it. Ask Claude: *"List my apps"* to verify the connection.
 
 ---
 
-## How to get the private key value
+## How to format the private key
 
-Open your `.p8` file and it looks like this:
+Open your `.p8` file — it looks like this:
 
 ```
 -----BEGIN PRIVATE KEY-----
@@ -67,11 +88,15 @@ MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg...
 -----END PRIVATE KEY-----
 ```
 
-In the JSON config, paste it with `\n` instead of real line breaks:
+**Important:** In the JSON config you must use `\\n` (two characters: backslash + n) instead of real line breaks. Using a single `\n` creates an actual newline which breaks HTTP headers.
 
+Use this one-liner to get the correctly formatted value:
+
+```bash
+awk '{printf "%s\\\\n", $0}' AuthKey_XXXXXXXXXX.p8 | sed 's/\\\\n$//'
 ```
-"-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49...\n-----END PRIVATE KEY-----"
-```
+
+Paste the output directly as the `x-appstore-private-key` value.
 
 ---
 
