@@ -20,6 +20,8 @@ pinned: false
 
 No installation required. The server is already running on Hugging Face Spaces.
 
+> 📖 **Full installation guide with screenshots and troubleshooting:** [docs/installation.md](docs/installation.md)
+
 ### 1. Get your App Store Connect API credentials
 
 Go to [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api) and create an API key with **Admin** or **App Manager** role. You'll need:
