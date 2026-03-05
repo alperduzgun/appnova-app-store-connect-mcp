@@ -598,7 +598,7 @@ if __name__ == "__main__":
         port = int(os.environ.get("PORT", 7860))
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = port
-        app = mcp.streamable_http_app()
+        app = mcp.streamable_http_app(allowed_hosts=["*"], allowed_origins=["*"])
         app.add_middleware(CredentialsMiddleware)
         uvicorn.run(app, host="0.0.0.0", port=port)
     else:
