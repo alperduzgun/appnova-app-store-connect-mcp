@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "appstore": {
+      "command": "/Users/alper/Documents/Development/Personal/appnova-appstore-mcp/.venv/bin/python3",
+      "args": ["server.py"],
+      "cwd": "/Users/alper/Documents/Development/Personal/appnova-appstore-mcp"
+    }
+  }
+}
