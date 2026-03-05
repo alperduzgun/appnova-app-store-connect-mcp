@@ -1,22 +1,46 @@
-name: appnova-app-store-connect-mcp
-description: App Store Connect MCP server for Claude — ASO, reviews, sales, TestFlight, and more.
-license: MIT
-runtime: python
-command: python server.py
-config:
-  - name: APPSTORE_ISSUER_ID
-    description: Issuer ID (UUID) from App Store Connect → Users and Access → Integrations
-    required: true
-  - name: APPSTORE_KEY_ID
-    description: Key ID (10 chars) from App Store Connect API keys page
-    required: true
-  - name: APPSTORE_PRIVATE_KEY
-    description: Full content of your .p8 private key file (including BEGIN/END lines)
-    required: true
-    secret: true
-  - name: APPSTORE_VENDOR_NUMBER
-    description: Vendor number for sales and finance reports
-    required: true
-  - name: APPSTORE_APP_ID
-    description: Default app — bundle ID (e.g. com.example.app) or numeric ID. Optional.
-    required: false
+build:
+  dockerfile: Dockerfile
+  dockerBuildPath: .
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - issuer_id
+      - key_id
+      - private_key
+      - vendor_number
+    properties:
+      issuer_id:
+        type: string
+        title: Issuer ID
+        description: UUID from App Store Connect → Users and Access → Integrations → Team Keys
+      key_id:
+        type: string
+        title: Key ID
+        description: 10-character key ID from App Store Connect API keys page
+      private_key:
+        type: string
+        title: Private Key (.p8 content)
+        description: Full content of your .p8 file including -----BEGIN PRIVATE KEY----- and -----END PRIVATE KEY----- lines
+      vendor_number:
+        type: string
+        title: Vendor Number
+        description: Your App Store vendor number (App Store Connect → Sales and Trends → Reports)
+      app_id:
+        type: string
+        title: Default App ID (optional)
+        description: Bundle ID (e.g. com.example.app) or numeric App Store ID. If omitted, call select_app() first.
+  commandFunction: |-
+    (config) => ({
+      command: "python",
+      args: ["server.py"],
+      env: {
+        APPSTORE_ISSUER_ID: config.issuer_id,
+        APPSTORE_KEY_ID: config.key_id,
+        APPSTORE_PRIVATE_KEY: config.private_key,
+        APPSTORE_VENDOR_NUMBER: config.vendor_number,
+        ...(config.app_id ? { APPSTORE_APP_ID: config.app_id } : {})
+      }
+    })

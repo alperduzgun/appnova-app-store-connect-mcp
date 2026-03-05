@@ -1,0 +1,16 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+!.env.example
+keys/
+*.p8
+.git/
+.gitignore
+.claude/
+README.md
+railway.toml
+smithery.yaml
