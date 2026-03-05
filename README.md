@@ -10,24 +10,100 @@ pinned: false
 
 # appnova-app-store-connect-mcp
 
-**App Store Connect MCP server for Claude** — manage your iOS app's entire lifecycle with natural language. The only MCP server with first-class **App Store Optimization (ASO)** support: edit metadata, keywords, and descriptions across all locales directly from Claude.
+**App Store Connect MCP server for Claude** — manage your iOS app's entire lifecycle with natural language. No Docker, no Python, no pip. Just add 4 lines to your Claude config and start talking to your App Store.
 
-48 tools · 14 categories · Python · FastMCP
-
----
-
-## Why This MCP?
-
-Most App Store Connect tools expose raw API endpoints. This server is designed for **AI-assisted iOS growth workflows**:
-
-- **ASO automation** — read and update app name, subtitle, keywords, descriptions across all locales in one conversation
-- **Review management** — triage 1-star reviews, draft responses, and publish them without leaving Claude
-- **Release workflows** — create version → update metadata → submit for review → monitor phased rollout, all via natural language
-- **Revenue intelligence** — query sales, finance reports, and subscription metrics with plain English
+48 tools · 14 categories · Hosted on Hugging Face Spaces · Free
 
 ---
 
-## Features
+## Quick Start — Zero Setup (Recommended)
+
+No installation required. The server is already running on Hugging Face Spaces.
+
+### 1. Get your App Store Connect API credentials
+
+Go to [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api) and create an API key with **Admin** or **App Manager** role. You'll need:
+
+- **Issuer ID** — shown at the top of the API Keys page
+- **Key ID** — shown next to your key
+- **Private key** — download the `.p8` file (only downloadable once)
+- **Vendor Number** — from [Payments and Financial Reports](https://appstoreconnect.apple.com/finance/reports/overview)
+
+### 2. Add to Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "appstore": {
+      "url": "https://haikuku-appnova-app-store-connect-mcp.hf.space/mcp",
+      "headers": {
+        "x-appstore-issuer-id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "x-appstore-key-id": "XXXXXXXXXX",
+        "x-appstore-private-key": "-----BEGIN PRIVATE KEY-----\nMIGH...\n-----END PRIVATE KEY-----",
+        "x-appstore-vendor-number": "12345678"
+      }
+    }
+  }
+}
+```
+
+> **Private key format:** Open your `.p8` file in a text editor and paste the full content. Replace actual newlines with `\n` — the entire key goes on one JSON line.
+
+### 3. Restart Claude Desktop
+
+That's it. Ask Claude: *"List my apps"* to verify the connection.
+
+---
+
+## How to get the private key value
+
+Open your `.p8` file and it looks like this:
+
+```
+-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg...
+-----END PRIVATE KEY-----
+```
+
+In the JSON config, paste it with `\n` instead of real line breaks:
+
+```
+"-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49...\n-----END PRIVATE KEY-----"
+```
+
+---
+
+## Optional: Pin a default app
+
+Add `x-appstore-app-id` to skip calling `select_app` every session:
+
+```json
+"headers": {
+  "x-appstore-issuer-id": "...",
+  "x-appstore-key-id": "...",
+  "x-appstore-private-key": "...",
+  "x-appstore-vendor-number": "...",
+  "x-appstore-app-id": "6502225088"
+}
+```
+
+Use either the numeric App Store ID or bundle ID (e.g. `com.example.yourapp`).
+
+---
+
+## Security
+
+Your credentials are sent as HTTP headers directly to the server and used exclusively to sign JWT tokens for Apple's API. They are **not logged, not stored, and not shared**. Each request is fully isolated — credentials from one user never touch another user's session.
+
+The server is open source: [github.com/alperduzgun/appnova-app-store-connect-mcp](https://github.com/alperduzgun/appnova-app-store-connect-mcp)
+
+If you prefer to host it yourself, see the [Self-Hosting](#self-hosting) section below.
+
+---
+
+## What You Can Do
 
 ### App Store Optimization (ASO)
 | Tool | Description |
@@ -131,63 +207,6 @@ Most App Store Connect tools expose raw API endpoints. This server is designed f
 
 ---
 
-## Quick Start
-
-### 1. Clone and set up
-
-```bash
-git clone https://github.com/alperduzgun/appnova-app-store-connect-mcp.git
-cd appnova-app-store-connect-mcp
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Configure credentials
-
-```bash
-cp .env.example .env
-# Edit .env with your App Store Connect API credentials
-```
-
-### 3. Add to Claude Desktop
-
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "appnova-appstore": {
-      "command": "/path/to/venv/bin/python",
-      "args": ["/path/to/appnova-app-store-connect-mcp/server.py"],
-      "env": {
-        "APPSTORE_ISSUER_ID": "your-issuer-id",
-        "APPSTORE_KEY_ID": "your-key-id",
-        "APPSTORE_PRIVATE_KEY_PATH": "/path/to/AuthKey_XXXXXXXXXX.p8",
-        "APPSTORE_VENDOR_NUMBER": "your-vendor-number",
-        "APPSTORE_APP_ID": "com.example.yourapp"
-      }
-    }
-  }
-}
-```
-
----
-
-## Configuration
-
-Get these values from [App Store Connect → Users and Access → Integrations](https://appstoreconnect.apple.com/access/integrations/api):
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `APPSTORE_ISSUER_ID` | ✅ | Issuer ID from App Store Connect API keys page |
-| `APPSTORE_KEY_ID` | ✅ | Key ID of your API key |
-| `APPSTORE_PRIVATE_KEY_PATH` | ✅ | Absolute path to your `.p8` private key file |
-| `APPSTORE_VENDOR_NUMBER` | ✅ | Required for sales and finance reports |
-| `APPSTORE_APP_ID` | Optional | Numeric App Store ID or bundle ID — skip `select_app` if set |
-| `APPSTORE_BUNDLE_ID` | Optional | Bundle ID when `APPSTORE_APP_ID` is a bundle string |
-
----
-
 ## Example Workflows
 
 **ASO audit across all locales:**
@@ -207,26 +226,74 @@ one that mentions a crash"
 "Give me a finance summary for the last 3 months and compare monthly trends"
 ```
 
+**Release workflow:**
+```
+"Create a new 2.5.0 version, update the what's new text for en-US and tr,
+then submit for review"
+```
+
 **Capability check:**
 ```
 "List all active capabilities for com.example.myapp and confirm Sign in with
 Apple is enabled"
 ```
 
-**Release workflow:**
+---
+
+## Self-Hosting
+
+Prefer to run it yourself? Clone the repo and run locally or deploy to your own infrastructure.
+
+### Local (stdio mode)
+
+```bash
+git clone https://github.com/alperduzgun/appnova-app-store-connect-mcp.git
+cd appnova-app-store-connect-mcp
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
 ```
-"Create a new 2.5.0 version, I'll tell you what to put in what's new,
-then submit it for review"
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "appstore": {
+      "command": "/path/to/venv/bin/python",
+      "args": ["/path/to/appnova-app-store-connect-mcp/server.py"],
+      "env": {
+        "APPSTORE_ISSUER_ID": "your-issuer-id",
+        "APPSTORE_KEY_ID": "your-key-id",
+        "APPSTORE_PRIVATE_KEY_PATH": "/path/to/AuthKey_XXXXXXXXXX.p8",
+        "APPSTORE_VENDOR_NUMBER": "your-vendor-number",
+        "APPSTORE_APP_ID": "com.example.yourapp"
+      }
+    }
+  }
+}
 ```
+
+### Docker / HTTP mode
+
+```bash
+docker build -t appnova-appstore-mcp .
+docker run -p 7860:7860 \
+  -e MCP_TRANSPORT=http \
+  -e APPSTORE_ISSUER_ID=... \
+  -e APPSTORE_KEY_ID=... \
+  -e APPSTORE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..." \
+  -e APPSTORE_VENDOR_NUMBER=... \
+  appnova-appstore-mcp
+```
+
+Then use `http://localhost:7860/mcp` as the URL in your Claude config (with or without headers — env vars are used as fallback).
 
 ---
 
 ## Requirements
 
-- Python 3.11+
-- [FastMCP](https://github.com/jlowin/fastmcp)
 - App Store Connect API key with **Admin** or **App Manager** role
-- Claude Desktop (or any MCP-compatible client)
+- Claude Desktop 0.10+ (or any MCP client that supports HTTP transport with custom headers)
 
 ---
 
