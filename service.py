@@ -38,17 +38,19 @@ def _log(level: str, msg: str, **ctx) -> None:
 # ─── Startup validation (Fail Fast) ─────────────────────────────────────────
 
 def _validate_env() -> None:
-    required = [
-        "APPSTORE_ISSUER_ID",
-        "APPSTORE_KEY_ID",
-        "APPSTORE_PRIVATE_KEY_PATH",
-    ]
+    required = ["APPSTORE_ISSUER_ID", "APPSTORE_KEY_ID"]
     missing = [k for k in required if not os.environ.get(k)]
     if missing:
         raise EnvironmentError(f"Missing required env vars: {missing}")
-    key_path = os.environ["APPSTORE_PRIVATE_KEY_PATH"]
-    if not os.path.exists(key_path):
-        raise FileNotFoundError(f"Private key not found: {key_path}")
+    # Private key: inline content OR file path — at least one required
+    if not os.environ.get("APPSTORE_PRIVATE_KEY"):
+        key_path = os.environ.get("APPSTORE_PRIVATE_KEY_PATH")
+        if not key_path:
+            raise EnvironmentError(
+                "Either APPSTORE_PRIVATE_KEY or APPSTORE_PRIVATE_KEY_PATH must be set"
+            )
+        if not os.path.exists(key_path):
+            raise FileNotFoundError(f"Private key not found: {key_path}")
 
 
 _validate_env()  # fail at import time, not during first request
@@ -81,8 +83,14 @@ class AppStoreConnectService:
         now = time.time()
         if self._token and now < self._token_expiry - 300:
             return self._token
-        with open(os.environ["APPSTORE_PRIVATE_KEY_PATH"], "r") as f:
-            private_key = f.read()
+        # Priority 1: inline content (cloud/Railway)
+        private_key = os.environ.get("APPSTORE_PRIVATE_KEY")
+        if not private_key:
+            # Priority 2: file path (local)
+            with open(os.environ["APPSTORE_PRIVATE_KEY_PATH"], "r") as f:
+                private_key = f.read()
+        # Railway env vars store newlines as literal \n — unescape them
+        private_key = private_key.replace("\\n", "\n")
         expiry = now + 1200  # 20 min; refresh after 15
         self._token = jwt.encode(
             {"iss": os.environ["APPSTORE_ISSUER_ID"], "iat": int(now),

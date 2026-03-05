@@ -570,4 +570,12 @@ async def disable_bundle_id_capability(capability_id: str) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    import os
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "http":
+        port = int(os.environ.get("PORT", 8000))
+        mcp.settings.host = "0.0.0.0"
+        mcp.settings.port = port
+        mcp.run(transport="streamable-http")
+    else:
+        mcp.run()
