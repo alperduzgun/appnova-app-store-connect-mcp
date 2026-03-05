@@ -6,6 +6,8 @@ import os
 import sys
 import time
 import asyncio
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
@@ -23,6 +25,9 @@ MAX_SALES_CONCURRENCY = 5      # guard against Apple 429s on parallel day fetche
 RETRYABLE_STATUS = frozenset({429, 500, 502, 503})
 MAX_REVIEW_RESPONSE_LEN = 5900  # Apple's documented limit
 
+# Per-request credentials — set by server.py middleware for HTTP mode
+_request_credentials: ContextVar[Optional[dict]] = ContextVar('request_credentials', default=None)
+
 
 # ─── Observability ───────────────────────────────────────────────────────────
 
@@ -35,25 +40,16 @@ def _log(level: str, msg: str, **ctx) -> None:
     )
 
 
-# ─── Startup validation (Fail Fast) ─────────────────────────────────────────
+# ─── Per-user state (keyed by issuer_id + key_id) ────────────────────────────
 
-def _validate_env() -> None:
-    required = ["APPSTORE_ISSUER_ID", "APPSTORE_KEY_ID"]
-    missing = [k for k in required if not os.environ.get(k)]
-    if missing:
-        raise EnvironmentError(f"Missing required env vars: {missing}")
-    # Private key: inline content OR file path — at least one required
-    if not os.environ.get("APPSTORE_PRIVATE_KEY"):
-        key_path = os.environ.get("APPSTORE_PRIVATE_KEY_PATH")
-        if not key_path:
-            raise EnvironmentError(
-                "Either APPSTORE_PRIVATE_KEY or APPSTORE_PRIVATE_KEY_PATH must be set"
-            )
-        if not os.path.exists(key_path):
-            raise FileNotFoundError(f"Private key not found: {key_path}")
-
-
-_validate_env()  # fail at import time, not during first request
+@dataclass
+class _UserState:
+    token: Optional[str] = None
+    token_expiry: float = 0
+    active_app: Optional[dict] = None
+    numeric_app_id: Optional[str] = None
+    analytics_ids: dict = field(default_factory=dict)
+    cache: dict = field(default_factory=dict)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -69,38 +65,60 @@ def _parse_int(value: object) -> int:
 
 class AppStoreConnectService:
     def __init__(self) -> None:
-        self._token: Optional[str] = None
-        self._token_expiry: float = 0
-        self._active_app: Optional[dict] = None  # set via set_app(); keys: id, name, bundleId
-        self._numeric_app_id: Optional[str] = None
-        self._analytics_ids: dict[str, str] = {}  # access_type → request_id
-        self._cache: dict[str, dict] = {}
+        self._states: dict[tuple, _UserState] = {}  # (issuer_id, key_id) → state
         self._sales_sem = asyncio.Semaphore(MAX_SALES_CONCURRENCY)
+
+    # ── Credentials & per-user state ──────────────────────────────────────────
+
+    def _get_creds(self) -> dict:
+        """Return credentials from HTTP headers (multi-tenant) or env vars (local dev)."""
+        creds = _request_credentials.get(None)
+        if creds:
+            return creds
+        # Fallback: env vars for local development
+        private_key = os.environ.get("APPSTORE_PRIVATE_KEY")
+        if not private_key:
+            path = os.environ.get("APPSTORE_PRIVATE_KEY_PATH", "")
+            if path and os.path.exists(path):
+                with open(path) as f:
+                    private_key = f.read()
+        return {
+            "issuer_id": os.environ.get("APPSTORE_ISSUER_ID", ""),
+            "key_id": os.environ.get("APPSTORE_KEY_ID", ""),
+            "private_key": private_key or "",
+            "vendor_number": os.environ.get("APPSTORE_VENDOR_NUMBER", ""),
+            "app_id": os.environ.get("APPSTORE_APP_ID"),
+        }
+
+    @property
+    def _state(self) -> _UserState:
+        creds = self._get_creds()
+        key = (creds["issuer_id"], creds["key_id"])
+        if key not in self._states:
+            self._states[key] = _UserState()
+        return self._states[key]
 
     # ── Auth ──────────────────────────────────────────────────────────────────
 
     def _generate_token(self) -> str:
         now = time.time()
-        if self._token and now < self._token_expiry - 300:
-            return self._token
-        # Priority 1: inline content (cloud/Railway)
-        private_key = os.environ.get("APPSTORE_PRIVATE_KEY")
-        if not private_key:
-            # Priority 2: file path (local)
-            with open(os.environ["APPSTORE_PRIVATE_KEY_PATH"], "r") as f:
-                private_key = f.read()
-        # Railway env vars store newlines as literal \n — unescape them
-        private_key = private_key.replace("\\n", "\n")
+        if self._state.token and now < self._state.token_expiry - 300:
+            return self._state.token
+        creds = self._get_creds()
+        if not creds["issuer_id"] or not creds["key_id"] or not creds["private_key"]:
+            raise ValueError("Missing App Store Connect credentials")
+        # Railway/HF env vars may store newlines as literal \n — unescape them
+        private_key = creds["private_key"].replace("\\n", "\n")
         expiry = now + 1200  # 20 min; refresh after 15
-        self._token = jwt.encode(
-            {"iss": os.environ["APPSTORE_ISSUER_ID"], "iat": int(now),
+        self._state.token = jwt.encode(
+            {"iss": creds["issuer_id"], "iat": int(now),
              "exp": int(expiry), "aud": "appstoreconnect-v1"},
             private_key,
             algorithm="ES256",
-            headers={"alg": "ES256", "kid": os.environ["APPSTORE_KEY_ID"], "typ": "JWT"},
+            headers={"alg": "ES256", "kid": creds["key_id"], "typ": "JWT"},
         )
-        self._token_expiry = expiry
-        return self._token
+        self._state.token_expiry = expiry
+        return self._state.token
 
     def _auth_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self._generate_token()}",
@@ -153,13 +171,13 @@ class AppStoreConnectService:
 
     async def _get_numeric_app_id(self) -> str:
         # Priority 1: app selected via set_app()
-        if self._active_app:
-            return self._active_app["id"]
+        if self._state.active_app:
+            return self._state.active_app["id"]
         # Priority 2: cached numeric ID from env resolution
-        if self._numeric_app_id:
-            return self._numeric_app_id
-        # Priority 3: backward compat — APPSTORE_APP_ID env var
-        app_id = os.environ.get("APPSTORE_APP_ID")
+        if self._state.numeric_app_id:
+            return self._state.numeric_app_id
+        # Priority 3: backward compat — APPSTORE_APP_ID env var or header
+        app_id = self._get_creds().get("app_id") or os.environ.get("APPSTORE_APP_ID")
         if not app_id:
             raise RuntimeError("No app selected. Call select_app() first.")
         if "." in app_id:
@@ -171,7 +189,7 @@ class AppStoreConnectService:
             if not result.get("data"):
                 raise RuntimeError(f"App not found for bundle ID: {bundle_id}")
             app_id = result["data"][0]["id"]
-        self._numeric_app_id = app_id
+        self._state.numeric_app_id = app_id
         return app_id
 
     # ── Multi-app management ──────────────────────────────────────────────────
@@ -199,22 +217,22 @@ class AppStoreConnectService:
                 {"fields[apps]": "name,bundleId"},
             )
             data = result["data"]
-        self._active_app = {
+        self._state.active_app = {
             "id": data["id"],
             "name": data["attributes"].get("name"),
             "bundleId": data["attributes"].get("bundleId"),
             "source": "api",
         }
-        self._numeric_app_id = None  # clear env-based cache
-        self._cache.clear()          # invalidate analytics/sales cache
-        self._analytics_ids.clear()  # invalidate analytics request IDs
-        return self._active_app
+        self._state.numeric_app_id = None  # clear env-based cache
+        self._state.cache.clear()          # invalidate analytics/sales cache
+        self._state.analytics_ids.clear()  # invalidate analytics request IDs
+        return self._state.active_app
 
     def get_active_app(self) -> Optional[dict]:
         """Return the currently selected app, or env fallback info if set."""
-        if self._active_app:
-            return self._active_app
-        app_id = os.environ.get("APPSTORE_APP_ID")
+        if self._state.active_app:
+            return self._state.active_app
+        app_id = self._get_creds().get("app_id") or os.environ.get("APPSTORE_APP_ID")
         if app_id:
             return {"id": app_id, "name": None, "bundleId": app_id if "." in app_id else None, "source": "env"}
         return None
@@ -409,8 +427,8 @@ class AppStoreConnectService:
 
     async def _ensure_analytics_request(self, access_type: str) -> str:
         """Get or create an analytics report request. Idempotent — handles 409."""
-        if access_type in self._analytics_ids:
-            return self._analytics_ids[access_type]
+        if access_type in self._state.analytics_ids:
+            return self._state.analytics_ids[access_type]
 
         app_id = await self._get_numeric_app_id()
 
@@ -421,8 +439,8 @@ class AppStoreConnectService:
                 {"filter[accessType]": access_type, "limit": 1},
             )
             if r.get("data"):
-                self._analytics_ids[access_type] = str(r["data"][0]["id"])
-                return self._analytics_ids[access_type]
+                self._state.analytics_ids[access_type] = str(r["data"][0]["id"])
+                return self._state.analytics_ids[access_type]
         except Exception as e:
             _log("warning", "Could not list analytics requests",
                  access_type=access_type, error=str(e))
@@ -435,7 +453,7 @@ class AppStoreConnectService:
                           "attributes": {"accessType": access_type},
                           "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}}},
             )
-            self._analytics_ids[access_type] = str(r["data"]["id"])
+            self._state.analytics_ids[access_type] = str(r["data"]["id"])
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 409:
                 _log("info", "409 on analytics request create — re-fetching",
@@ -445,9 +463,9 @@ class AppStoreConnectService:
                 )
                 for item in fb.get("data", []):
                     if item.get("attributes", {}).get("accessType") == access_type:
-                        self._analytics_ids[access_type] = str(item["id"])
+                        self._state.analytics_ids[access_type] = str(item["id"])
                         break
-                if access_type not in self._analytics_ids:
+                if access_type not in self._state.analytics_ids:
                     raise RuntimeError(
                         f"No {access_type} analytics request found after 409"
                     )
@@ -456,7 +474,7 @@ class AppStoreConnectService:
                      access_type=access_type, status=e.response.status_code)
                 raise
 
-        return self._analytics_ids[access_type]
+        return self._state.analytics_ids[access_type]
 
     async def _download_instance(self, instance_id: str) -> list[dict]:
         """Download + parse a gzip TSV analytics report instance. Retries on failure."""
@@ -495,7 +513,7 @@ class AppStoreConnectService:
             raise ValueError(f"days must be 1–365, got {days}")
 
         cache_key = f"analytics:{days}"
-        cached = self._cache.get(cache_key)
+        cached = self._state.cache.get(cache_key)
         if cached and time.time() - cached["ts"] < CACHE_TTL:
             return cached["data"]
 
@@ -620,7 +638,7 @@ class AppStoreConnectService:
                     f"{len(all_names)} report types configured."
                 )
 
-            self._cache[cache_key] = {"data": result, "ts": time.time()}
+            self._state.cache[cache_key] = {"data": result, "ts": time.time()}
             return result
 
         except Exception as e:
@@ -633,7 +651,7 @@ class AppStoreConnectService:
             raise ValueError(f"days must be 1–365, got {days}")
 
         cache_key = f"sales:{days}"
-        cached = self._cache.get(cache_key)
+        cached = self._state.cache.get(cache_key)
         if cached and time.time() - cached["ts"] < CACHE_TTL:
             return cached["data"]
 
@@ -642,9 +660,9 @@ class AppStoreConnectService:
         from datetime import date as dt_date, timedelta
 
         try:
-            vendor = os.environ.get("APPSTORE_VENDOR_NUMBER")
+            vendor = self._get_creds().get("vendor_number") or os.environ.get("APPSTORE_VENDOR_NUMBER")
             if not vendor:
-                raise RuntimeError("APPSTORE_VENDOR_NUMBER env var is required for sales reports.")
+                raise RuntimeError("APPSTORE_VENDOR_NUMBER env var (or x-appstore-vendor-number header) is required for sales reports.")
             daily: dict[str, dict] = {}
             failed_days: list[str] = []
 
@@ -737,7 +755,7 @@ class AppStoreConnectService:
                 _log("warning", "Some sales days failed to fetch", count=len(failed_days),
                      days=failed_days[:5])
 
-            self._cache[cache_key] = {"data": result, "ts": time.time()}
+            self._state.cache[cache_key] = {"data": result, "ts": time.time()}
             return result
 
         except Exception as e:
@@ -876,13 +894,13 @@ class AppStoreConnectService:
             raise ValueError(f"No finance data available for {year}-{month:02d}")
 
         cache_key = f"finance:{year}:{month}"
-        cached = self._cache.get(cache_key)
+        cached = self._state.cache.get(cache_key)
         if cached and time.time() - cached["ts"] < FINANCE_CACHE_TTL:
             return cached["data"]
 
-        vendor = os.environ.get("APPSTORE_VENDOR_NUMBER")
+        vendor = self._get_creds().get("vendor_number") or os.environ.get("APPSTORE_VENDOR_NUMBER")
         if not vendor:
-            raise RuntimeError("APPSTORE_VENDOR_NUMBER env var is required for finance reports.")
+            raise RuntimeError("APPSTORE_VENDOR_NUMBER env var (or x-appstore-vendor-number header) is required for finance reports.")
 
         try:
             r = await self._request(
@@ -940,7 +958,7 @@ class AppStoreConnectService:
                 "byTerritory": [{**t, "proceeds": round(t["proceeds"], 2)} for t in territories],
                 "rowCount": len(data_rows),
             }
-            self._cache[cache_key] = {"data": result, "ts": time.time()}
+            self._state.cache[cache_key] = {"data": result, "ts": time.time()}
             return result
 
         except Exception as e:
@@ -997,7 +1015,7 @@ class AppStoreConnectService:
         app_id = await self._get_numeric_app_id()
 
         cache_key = f"builds:{limit}"
-        cached = self._cache.get(cache_key)
+        cached = self._state.cache.get(cache_key)
         if cached and time.time() - cached["ts"] < BUILDS_CACHE_TTL:
             return cached["data"]
 
@@ -1035,7 +1053,7 @@ class AppStoreConnectService:
                 "minOsVersion": attrs.get("minOsVersion"),
             })
 
-        self._cache[cache_key] = {"data": builds, "ts": time.time()}
+        self._state.cache[cache_key] = {"data": builds, "ts": time.time()}
         return builds
 
     async def list_beta_groups(self) -> list:
@@ -1043,7 +1061,7 @@ class AppStoreConnectService:
         app_id = await self._get_numeric_app_id()
 
         cache_key = "beta_groups"
-        cached = self._cache.get(cache_key)
+        cached = self._state.cache.get(cache_key)
         if cached and time.time() - cached["ts"] < BUILDS_CACHE_TTL:
             return cached["data"]
 
@@ -1067,7 +1085,7 @@ class AppStoreConnectService:
             for g in result.get("data", [])
         ]
 
-        self._cache[cache_key] = {"data": groups, "ts": time.time()}
+        self._state.cache[cache_key] = {"data": groups, "ts": time.time()}
         return groups
 
     async def add_beta_tester(self, email: str, first_name: str, last_name: str, group_id: str) -> dict:
@@ -1088,7 +1106,7 @@ class AppStoreConnectService:
                 }
             },
         )
-        self._cache.pop("beta_groups", None)
+        self._state.cache.pop("beta_groups", None)
         return result
 
     async def remove_beta_tester(self, tester_id: str, group_id: str) -> dict:
@@ -1104,7 +1122,7 @@ class AppStoreConnectService:
             json={"data": [{"type": "betaTesters", "id": tester_id}]},
         )
         r.raise_for_status()
-        self._cache.pop("beta_groups", None)
+        self._state.cache.pop("beta_groups", None)
         return {"status": "removed", "tester_id": tester_id, "group_id": group_id}
 
     # ── Custom Product Pages ──────────────────────────────────────────────────

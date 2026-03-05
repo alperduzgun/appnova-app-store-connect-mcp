@@ -571,11 +571,35 @@ async def disable_bundle_id_capability(capability_id: str) -> str:
 
 if __name__ == "__main__":
     import os
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from service import _request_credentials
+
+    class CredentialsMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            h = request.headers
+            creds = {
+                "issuer_id":    h.get("x-appstore-issuer-id"),
+                "key_id":       h.get("x-appstore-key-id"),
+                "private_key":  h.get("x-appstore-private-key"),
+                "vendor_number": h.get("x-appstore-vendor-number"),
+                "app_id":       h.get("x-appstore-app-id"),
+            }
+            if any(creds.values()):
+                token = _request_credentials.set(creds)
+                try:
+                    return await call_next(request)
+                finally:
+                    _request_credentials.reset(token)
+            return await call_next(request)
+
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
-        port = int(os.environ.get("PORT", 8000))
+        import uvicorn
+        port = int(os.environ.get("PORT", 7860))
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = port
-        mcp.run(transport="streamable-http")
+        app = mcp.streamable_http_app()
+        app.add_middleware(CredentialsMiddleware)
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         mcp.run()
