@@ -240,60 +240,16 @@ Apple is enabled"
 
 ---
 
-## Self-Hosting
-
-Prefer to run it yourself? Clone the repo and run locally or deploy to your own infrastructure.
-
-### Local (stdio mode)
-
-```bash
-git clone https://github.com/alperduzgun/appnova-app-store-connect-mcp.git
-cd appnova-app-store-connect-mcp
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Add to `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "appstore": {
-      "command": "/path/to/venv/bin/python",
-      "args": ["/path/to/appnova-app-store-connect-mcp/server.py"],
-      "env": {
-        "APPSTORE_ISSUER_ID": "your-issuer-id",
-        "APPSTORE_KEY_ID": "your-key-id",
-        "APPSTORE_PRIVATE_KEY_PATH": "/path/to/AuthKey_XXXXXXXXXX.p8",
-        "APPSTORE_VENDOR_NUMBER": "your-vendor-number",
-        "APPSTORE_APP_ID": "com.example.yourapp"
-      }
-    }
-  }
-}
-```
-
-### Docker / HTTP mode
-
-```bash
-docker build -t appnova-appstore-mcp .
-docker run -p 7860:7860 \
-  -e MCP_TRANSPORT=http \
-  -e APPSTORE_ISSUER_ID=... \
-  -e APPSTORE_KEY_ID=... \
-  -e APPSTORE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..." \
-  -e APPSTORE_VENDOR_NUMBER=... \
-  appnova-appstore-mcp
-```
-
-Then use `http://localhost:7860/mcp` as the URL in your Claude config (with or without headers — env vars are used as fallback).
-
----
-
 ## Requirements
 
 - App Store Connect API key with **Admin** or **App Manager** role
 - Claude Desktop 0.10+ (or any MCP client that supports HTTP transport with custom headers)
+
+---
+
+## Self-Hosting
+
+Want to run the server yourself? Full source code and setup instructions at [github.com/alperduzgun/appnova-app-store-connect-mcp](https://github.com/alperduzgun/appnova-app-store-connect-mcp).
 
 ---
 
