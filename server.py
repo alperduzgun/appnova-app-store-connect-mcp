@@ -7,10 +7,14 @@ import json
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from service import service
 
 mcp = FastMCP(
     "appnova-appstore",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
+    ),
     instructions=(
         "App Store Connect tools for iOS app management. "
         "APP SELECTION: if APPSTORE_APP_ID env is not set, call list_apps first, "
@@ -598,7 +602,7 @@ if __name__ == "__main__":
         port = int(os.environ.get("PORT", 7860))
         mcp.settings.host = "0.0.0.0"
         mcp.settings.port = port
-        app = mcp.streamable_http_app(allowed_hosts=["*"], allowed_origins=["*"])
+        app = mcp.streamable_http_app()
         app.add_middleware(CredentialsMiddleware)
         uvicorn.run(app, host="0.0.0.0", port=port)
     else:
