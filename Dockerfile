@@ -8,8 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY server.py service.py ./
 
 ENV MCP_TRANSPORT=http
-ENV PORT=8000
+# Default 7860 for Hugging Face Spaces; override with PORT env var for other platforms
+ENV PORT=7860
 
-EXPOSE 8000
+EXPOSE 7860
 
 CMD ["python", "server.py"]

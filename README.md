@@ -1,3 +1,13 @@
+---
+title: appnova-app-store-connect-mcp
+emoji: 🍎
+colorFrom: gray
+colorTo: orange
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # appnova-app-store-connect-mcp
 
 **App Store Connect MCP server for Claude** — manage your iOS app's entire lifecycle with natural language. The only MCP server with first-class **App Store Optimization (ASO)** support: edit metadata, keywords, and descriptions across all locales directly from Claude.
