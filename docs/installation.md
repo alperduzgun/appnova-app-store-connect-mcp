@@ -15,7 +15,7 @@ You need an **Account Holder** or **Admin** role on your Apple Developer account
 5. Enter a name (e.g. `Claude MCP`) and select **Admin** role
 6. Click **Generate**
 
-> **Role note:** Admin gives full access to all tools. If you only need reviews, sales, and metadata — App Manager is sufficient. Finance reports require Admin or Finance role.
+> **Role note:** Use **Admin** for full access to all 48 tools including finance reports. App Manager works for reviews, sales, ASO, and TestFlight — but finance tools (`get_finance_report`, `get_finance_summary`) will return 403. One role per key; you cannot combine roles.
 
 ---
 
@@ -72,7 +72,13 @@ The private key must be on a single line with `\\n` between each line (not real 
 Run this command to get the correctly formatted value:
 
 ```bash
-awk '{printf "%s\\\\n", $0}' ~/Downloads/AuthKey_XXXXXXXXXX.p8 | sed 's/\\\\n$//'
+awk '{printf "%s\\n", $0}' ~/Downloads/AuthKey_XXXXXXXXXX.p8 | sed '$ s/\\n$//'
+```
+
+Or with Python (macOS built-in):
+
+```bash
+python3 -c "print(open('AuthKey_XXXXXXXXXX.p8').read().strip().replace('\n', '\\\\n'))"
 ```
 
 Copy the entire output — it will look like:

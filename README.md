@@ -95,7 +95,7 @@ MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg...
 Use this one-liner to get the correctly formatted value:
 
 ```bash
-awk '{printf "%s\\\\n", $0}' AuthKey_XXXXXXXXXX.p8 | sed 's/\\\\n$//'
+awk '{printf "%s\\n", $0}' AuthKey_XXXXXXXXXX.p8 | sed '$ s/\\n$//'
 ```
 
 Paste the output directly as the `x-appstore-private-key` value.
